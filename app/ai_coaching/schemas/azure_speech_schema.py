@@ -16,6 +16,14 @@ class SttResponse(BaseModel):
     recognizedText: str
 
 # =========================
+# PronunciationProblemWord
+# =========================
+class PronunciationProblemWord(BaseModel):
+    word: str
+    score: float | None = None
+    feedback: str | None = None
+
+# =========================
 # Pronunciation Assessment
 # =========================
 class PronunciationAssessmentResponse(BaseModel):
@@ -24,7 +32,8 @@ class PronunciationAssessmentResponse(BaseModel):
     fluencyScore: float | None = None
     completenessScore: float | None = None
     pronunciationScore: float | None = None
-
+    feedback: str | None = None
+    problemWords: list[PronunciationProblemWord] = []
 # =========================
 # Problem Word Audio
 # =========================

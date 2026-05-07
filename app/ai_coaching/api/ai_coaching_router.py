@@ -11,8 +11,6 @@ from app.ai_coaching.schemas.openai_schema import (
     CoachingScriptResponse,
     FinalFeedbackRequest,
     FinalFeedbackResponse,
-    RecommendSentencesRequest,
-    RecommendSentencesResponse,
     YoutubeKeywordsRequest,
     YoutubeKeywordsResponse,)
 from app.ai_coaching.schemas.youtube_schema import (
@@ -28,7 +26,6 @@ from app.ai_coaching.services.azure_speech_service import (
 from app.ai_coaching.services.openai_service import (
     generate_coaching_script,
     generate_final_feedback,
-    generate_recommend_sentences,
     generate_youtube_keywords,
     summarize_video_with_llm,)
 from app.ai_coaching.services.youtube_service import search_youtube_videos
@@ -47,10 +44,6 @@ def create_coaching_script(request: CoachingScriptRequest,) -> CoachingScriptRes
 @router.post("/final-feedback", response_model=FinalFeedbackResponse)
 def create_final_feedback(request: FinalFeedbackRequest,) -> FinalFeedbackResponse:
     return generate_final_feedback(request)
-
-@router.post("/recommend-sentences", response_model=RecommendSentencesResponse)
-def create_recommend_sentences(request: RecommendSentencesRequest,) -> RecommendSentencesResponse:
-    return generate_recommend_sentences(request)
 
 @router.post("/youtube-keywords", response_model=YoutubeKeywordsResponse)
 def create_youtube_keywords(request: YoutubeKeywordsRequest,) -> YoutubeKeywordsResponse:

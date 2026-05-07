@@ -33,9 +33,11 @@ class CoachingScriptResponse(BaseModel):
 class PronunciationResult(BaseModel):
     expectedText: str
     recognizedText: str
-    accuracyScore: float
-    fluencyScore: float
-    completenessScore: float
+    accuracyScore: float | None = None
+    fluencyScore: float | None = None
+    completenessScore: float | None = None
+    pronunciationScore: float | None = None
+    problemWords: list[str] = []
 
 class FinalFeedbackRequest(BaseModel):
     messages: List[PreviousMessage] = Field(default_factory=list)
