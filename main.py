@@ -1,7 +1,7 @@
 from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
 from app.ai_coaching.api.ai_coaching_router import router as ai_coaching_router
-# test deploy
+from app.ai_place.api.gpt_router import router as gpt_router
 
 app = FastAPI(
     title="LanguageMap FastAPI",
@@ -11,6 +11,7 @@ app = FastAPI(
 app.mount("/static", StaticFiles(directory="static"), name="static")
 
 app.include_router(ai_coaching_router)
+app.include_router(gpt_router)
 
 @app.get("/")
 def read_root():
