@@ -1,67 +1,201 @@
-# AI Coaching 기능 외부 API 및 환경 변수 가이드
+# Mapingo FastAPI AI Server
 
-AI Coaching 기능에서 사용하는 외부 API 연동을 위해 환경 변수 설정이 필요합니다.  
-로컬 개발 및 협업 시 아래 내용을 참고하여 설정해주세요.
+지도 기반 AI 영어 학습 서비스 Mapingo의 AI 서버입니다.
+
+OpenAI 기반 영어 회화 생성 및 AI 학습 기능을 담당합니다.
+
+![Python](https://img.shields.io/badge/Python-3.x-3776AB?style=for-the-badge&logo=python)
+![FastAPI](https://img.shields.io/badge/FastAPI-AI_Server-009688?style=for-the-badge&logo=fastapi)
+![Uvicorn](https://img.shields.io/badge/Uvicorn-ASGI_Server-499848?style=for-the-badge)
+![OpenAI](https://img.shields.io/badge/OpenAI-GPT-412991?style=for-the-badge&logo=openai)
+![Pydantic](https://img.shields.io/badge/Pydantic-Validation-E92063?style=for-the-badge)
+![Python-dotenv](https://img.shields.io/badge/Python_Dotenv-Environment-4B8BBE?style=for-the-badge)
+![Pydantic Settings](https://img.shields.io/badge/Pydantic_Settings-Config_Management-E92063?style=for-the-badge)
+![Notion](https://img.shields.io/badge/Notion-Documentation-000000?style=for-the-badge&logo=notion)
 
 ---
 
-## 환경 변수 설정
+## 주요 기능(Main Domains)
 
-프로젝트 실행 전, FastAPI 프로젝트 루트 경로에 `.env` 파일을 생성한 뒤  
-`.env.example` 파일을 참고하여 각 환경 변수를 입력해주세요.
+- AI 음성 학습 도메인
+- AI 채팅 도메인
+---
+
+## 레포지토리 구조(Repository Structure)
+
+| Repository | Address |
+|---|---|
+| language-react | [React Frontend](https://github.com/soo97/languagemap-react.git) |
+| language-spring | [Spring Boot API Server](https://github.com/soo97/languagemap-spring.git) |
+| language-fastapi | [FastAPI AI Server](https://github.com/soo97/languagemap-FastAPI.git) |
+
+---
+
+## AWS 아키텍쳐(AWS Architecture)
+
+<img width="1627" height="967" alt="image" src="https://github.com/user-attachments/assets/a1f1799b-9b03-40f8-90d3-a3abe20415ef" />
+
+---
+
+## 브랜치 구조(Branch Structure)
+
+| Branch | Description |
+|---|---|
+| main | 운영 가능한 안정 버전 |
+| feature/* | 기능 개발 브랜치 |
+| fix/* | 기능 수정 브랜치 |
+
+---
+
+## 프로젝트 규칙(Project Rules)
+
+
+- `main.py`에서 FastAPI 앱과 라우터를 관리한다.
+- 기능별 코드는 `app/{feature}` 단위로 분리한다.
+- 각 기능은 `api`, `schemas`, `services` 구조를 따른다.
+- 요청/응답 형식은 Pydantic 스키마로 정의한다.
+- 비즈니스 로직과 외부 API 호출은 `services`에서 처리한다.
+- 환경설정 값은 `.env` 기반으로 관리한다.
+- 정적 파일은 `static` 디렉터리에서 관리한다.
+
+---
+
+## 커밋 규칙(Commit Rules)
+
+```text
+feat: 기능 추가
+fix: 버그 수정
+style: 코드 포맷/스타일 변경
+chore: 기타 설정
+design: UI/UX 변경
+rename: 이름 변경
+remove: 삭제
+refactor: 리팩토링
+build: 빌드 변경
+```
+
+---
+
+## 기술 스택(Tech Stack)
+
+| Category | Stack |
+|---|---|
+| AI Server | FastAPI, Python |
+| ASGI Server | Uvicorn |
+| AI API | OpenAI API |
+| Data Validation | Pydantic |
+| Environment Management | Python-dotenv, Pydantic Settings |
+| Collaboration Tools | GitHub, Notion, Swagger, ERDCloud |
+
+---
+
+## 폴더 구조(Folder Structure)
+
+```text
+languagemap-FastAPI
+├─ app
+│  ├─ ai_coaching
+│  │  ├─ api
+│  │  ├─ prompts
+│  │  ├─ schemas
+│  │  └─ services
+│  ├─ ai_place
+│  │  ├─ api
+│  │  ├─ schemas
+│  │  ├─ services
+│  │  └─ utils
+│  └─ core
+├─ static
+│  ├─ audio
+│  └─ uploads
+├─ main.py
+└─ requirements.txt
+```
+
+## 네이밍 컨벤션(Naming Convention)
+
+| Layer | Rule |
+|---|---|
+| Router | ~Router |
+| Service | ~Service |
+| Schema | ~Schema |
+| Model | snake_case |
+| Prompt | ~Prompt |
+
+---
+
+## API 컨벤션(API Convention)
+
+- REST API 기반 설계
+- JSON 기반 Request / Response 처리
+- Pydantic 기반 데이터 검증
+- 공통 응답 형식 사용
+- Spring Server 응답 구조 통일
+
+---
+
+## 응답 컨벤션(Response Convention)
+
+```json
+{
+  "success": true,
+  "message": "",
+  "data": {}
+}
+```
+
+## 프롬프트 규칙
+
+- Role, Instruction, Context, Output Format 구조로 작성한다.
+- JSON 응답이 필요한 경우 JSON만 반환하게 한다.
+- 마크다운, 코드블록, 부가 설명은 금지한다.
+- 장소, 이전 대화, 평가 결과 등 입력 컨텍스트를 반영한다.
+- 결과는 학습용으로 실용적이고 자연스럽게 작성한다.
+- 대화 확장 시 기존 흐름과 의미를 유지한다.
+- 출력 언어와 형식, 개수 조건을 프롬프트에서 명확히 지정한다.
+
+---
+
+## 환경 변수(Environment Variables)
+
+env 설정
 
 ```env
 OPENAI_API_KEY=
+OPENAI_MOCK_MODE=
+OPENAI_CHAT_MODEL=
 AZURE_SPEECH_KEY=
 AZURE_SPEECH_REGION=
 AZURE_SPEECH_ENDPOINT=
+AZURE_SPEECH_VOICE_NAME=
 YOUTUBE_API_KEY=
 ```
 
-## 환경 변수 설명
+---
 
-| 변수명                   | 설명                    | 사용 목적             |
-|-----------------------|-----------------------|-------------------|
-| OPENAI_API_KEY        | OpenAI API 인증 키       | AI 대화 생성, 피드백 생성  |
-| AZURE_SPEECH_KEY      | Azure Speech 인증 키     | 음성 인식(STT),발음 평가       |
-| AZURE_SPEECH_REGION   | Azure Speech 리전 정보    | 예: `koreacentral` |
-| AZURE_SPEECH_ENDPOINT | Azure Speech 엔드포인트    | Speech API 호출 주소  |
-| YOUTUBE_API_KEY       | YouTube Data API 인증 키 | 학습 콘텐츠 추천, 영상 검색  |
+## 보안 규칙(Secret Rules)
+
+- .env 파일 GitHub 업로드 금지
+- OpenAI API Key 외부 노출 금지
+- 환경 변수 로컬 개별 관리
 
 ---
 
-## 보안 및 업로드 정책
+## 레포지토리 복제(Clone Repository)
 
-실제 API Key가 포함된 `.env` 파일은 민감 정보에 해당하므로  
-GitHub 저장소에 업로드하지 않습니다.
-
-`.gitignore`에 `.env` 파일이 포함되어 있는지 반드시 확인해주세요.
-
-저장소에는 샘플 템플릿 파일인 `.env.example`만 업로드합니다.
+```bash
+git clone https://github.com/soo97/languagemap-FastAPI.git
+```
 
 ---
 
-## 협업 가이드
+## 팀원 및 역할(Team Members)
 
-유료 API Key는 비용 및 보안 이슈로 인해 직접 공유하지 않고 서버 환경 변수로 관리합니다.
-
-팀원들은 아래 방식으로 협업합니다.
-
-### 로컬 개발
-
-각자 `.env` 파일을 생성하여 필요한 값을 직접 입력 후 실행합니다.
-
-### 공용 서버 개발
-
-배포 서버 또는 공용 개발 서버에서는 환경 변수로 별도 관리합니다.
-
-### 기능 테스트
-
-API Key가 없는 팀원은 외부 API 호출 기능을 제외한 일반 API, 프론트 연동, UI 개발이 가능합니다.
-
----
-
-## 참고 사항
-
-외부 API 호출량에 따라 비용이 발생할 수 있으므로  
-개발 단계에서는 불필요한 반복 호출을 지양하고, 테스트용 요청만 사용해주세요.
+| 이름 | 역할 | 기능 구현 |
+|---|---|---|
+| 임수현 | 팀장 | (추가 예정) |
+| 고은별 | 팀원 | // |
+| 마은재 | 팀원 | // |
+| 이가연 | 팀원 | // |
+| 이현재 | 팀원 | // |
+| 홍순찬 | 팀원 | // |
