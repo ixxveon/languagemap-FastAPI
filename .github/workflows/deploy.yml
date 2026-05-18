@@ -29,5 +29,5 @@ jobs:
             --instance-ids "${{ secrets.EC2_INSTANCE_ID }}" \
             --document-name "AWS-RunShellScript" \
             --comment "Deploy FastAPI app" \
-            --parameters '{"commands":["cd /home/ubuntu/fastapi-app","chmod +x deploy.sh","./deploy.sh"]}' \
+            --parameters '{"commands":["cd /home/ubuntu/fastapi-app","git fetch --prune origin main","git reset --hard ${{ github.sha }}","chmod +x deploy.sh","./deploy.sh"]}' \
             --region "${{ secrets.AWS_REGION }}"
