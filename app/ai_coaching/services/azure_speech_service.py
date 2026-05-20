@@ -92,6 +92,15 @@ def synthesize_text_to_audio(text: str) -> TtsResponse:
 
 
 def recognize_speech_from_path(saved_path: Path) -> SttResponse:
+    started_at = time.perf_counter()
+
+    logger.info(
+        "Starting Azure STT recognition. audio_path=%s audio_size=%s duration_seconds=%s",
+        saved_path,
+        saved_path.stat().st_size if saved_path.exists() else None,
+        get_audio_duration_seconds(saved_path),
+    )
+
     speech_config = _create_speech_config()
     audio_config = speechsdk.audio.AudioConfig(filename=str(saved_path))
 
@@ -104,7 +113,32 @@ def recognize_speech_from_path(saved_path: Path) -> SttResponse:
     result = recognizer.recognize_once_async().get()
 
     if result.reason != speechsdk.ResultReason.RecognizedSpeech:
+        no_match_details = None
+        cancellation_details = None
+
+        if result.reason == speechsdk.ResultReason.NoMatch:
+            no_match_details = speechsdk.NoMatchDetails.from_result(result)
+
+        if result.reason == speechsdk.ResultReason.Canceled:
+            cancellation_details = speechsdk.CancellationDetails.from_result(result)
+
+        logger.warning(
+            "Azure STT did not recognize speech. audio_path=%s elapsed_ms=%s reason=%s no_match_reason=%s cancellation_reason=%s cancellation_error=%s",
+            saved_path,
+            int((time.perf_counter() - started_at) * 1000),
+            result.reason,
+            getattr(no_match_details, "reason", None),
+            getattr(cancellation_details, "reason", None),
+            getattr(cancellation_details, "error_details", None),
+        )
         return SttResponse(recognizedText="")
+
+    logger.info(
+        "Azure STT recognition completed. audio_path=%s elapsed_ms=%s recognized_text_length=%s",
+        saved_path,
+        int((time.perf_counter() - started_at) * 1000),
+        len(result.text or ""),
+    )
 
     return SttResponse(recognizedText=result.text)
 
@@ -166,12 +200,41 @@ def assess_pronunciation_from_path(
             getattr(cancellation_details, "error_details", None),
         )
 
+        stt_fallback = recognize_speech_from_path(saved_path)
+        fallback_text = stt_fallback.recognizedText or ""
+
+        if fallback_text.strip():
+            logger.warning(
+                "Pronunciation assessment failed but STT fallback recognized speech. audio_path=%s recognized_text_length=%s",
+                saved_path,
+                len(fallback_text),
+            )
+
+            feedback_result = analyze_pronunciation_feedback(
+                reference_text=reference_text,
+                recognized_text=fallback_text,
+                accuracy_score=0,
+                fluency_score=0,
+                completeness_score=0,
+                pronunciation_score=0,
+            )
+
+            return PronunciationAssessmentResponse(
+                recognizedText=fallback_text,
+                accuracyScore=0,
+                fluencyScore=0,
+                completenessScore=0,
+                pronunciationScore=0,
+                feedback=feedback_result.get("feedback"),
+                problemWords=feedback_result.get("problemWords", []),
+            )
+
         return PronunciationAssessmentResponse(
             recognizedText="",
-            accuracyScore=None,
-            fluencyScore=None,
-            completenessScore=None,
-            pronunciationScore=None,
+            accuracyScore=0,
+            fluencyScore=0,
+            completenessScore=0,
+            pronunciationScore=0,
             feedback=DEFAULT_NO_SPEECH_FEEDBACK,
             problemWords=[],
         )
@@ -179,6 +242,47 @@ def assess_pronunciation_from_path(
     pronunciation_result = speechsdk.PronunciationAssessmentResult(result)
 
     recognized_text = result.text
+
+    if not recognized_text.strip():
+        logger.warning(
+            "Azure pronunciation assessment returned blank recognized text. audio_path=%s elapsed_ms=%s",
+            saved_path,
+            int((time.perf_counter() - started_at) * 1000),
+        )
+
+        stt_fallback = recognize_speech_from_path(saved_path)
+        fallback_text = stt_fallback.recognizedText or ""
+
+        if fallback_text.strip():
+            feedback_result = analyze_pronunciation_feedback(
+                reference_text=reference_text,
+                recognized_text=fallback_text,
+                accuracy_score=0,
+                fluency_score=0,
+                completeness_score=0,
+                pronunciation_score=0,
+            )
+
+            return PronunciationAssessmentResponse(
+                recognizedText=fallback_text,
+                accuracyScore=0,
+                fluencyScore=0,
+                completenessScore=0,
+                pronunciationScore=0,
+                feedback=feedback_result.get("feedback"),
+                problemWords=feedback_result.get("problemWords", []),
+            )
+
+        return PronunciationAssessmentResponse(
+            recognizedText="",
+            accuracyScore=0,
+            fluencyScore=0,
+            completenessScore=0,
+            pronunciationScore=0,
+            feedback=DEFAULT_NO_SPEECH_FEEDBACK,
+            problemWords=[],
+        )
+
     accuracy_score = pronunciation_result.accuracy_score
     fluency_score = pronunciation_result.fluency_score
     completeness_score = pronunciation_result.completeness_score
@@ -218,7 +322,8 @@ def assess_pronunciation_from_path(
 
 async def recognize_speech_from_file(audio_file: UploadFile) -> SttResponse:
     saved_path = await save_upload_file(audio_file)
-    return recognize_speech_from_path(saved_path)
+    wav_path = convert_audio_to_wav(saved_path)
+    return recognize_speech_from_path(wav_path)
 
 
 async def assess_pronunciation(
