@@ -29,5 +29,5 @@ jobs:
             --instance-ids "${{ secrets.EC2_INSTANCE_ID }}" \
             --document-name "AWS-RunShellScript" \
             --comment "Deploy FastAPI app" \
-            --parameters '{"commands":["git config --global --add safe.directory /home/ubuntu/fastapi-app","cd /home/ubuntu/fastapi-app","git fetch --prune origin main","git reset --hard origin/main","bash -lc \"source venv/bin/activate && pip install -r requirements.txt\"","chmod +x deploy.sh","./deploy.sh"]}' \
+            --parameters '{"commands":["git config --global --add safe.directory /home/ubuntu/fastapi-app","cd /home/ubuntu/fastapi-app","git fetch --prune origin main","git reset --hard origin/main","bash -lc \"command -v ffmpeg >/dev/null && command -v ffprobe >/dev/null || (sudo apt-get update && sudo apt-get install -y ffmpeg)\"","bash -lc \"source venv/bin/activate && pip install -r requirements.txt\"","chmod +x deploy.sh","./deploy.sh"]}' \
             --region "${{ secrets.AWS_REGION }}"

@@ -55,3 +55,43 @@ def convert_audio_to_wav(input_path: str | Path) -> Path:
     )
 
     return output_file
+
+
+def get_audio_duration_seconds(input_path: str | Path) -> float | None:
+    input_file = Path(input_path)
+
+    command = [
+        "ffprobe",
+        "-v",
+        "error",
+        "-show_entries",
+        "format=duration",
+        "-of",
+        "default=noprint_wrappers=1:nokey=1",
+        str(input_file),
+    ]
+
+    try:
+        result = subprocess.run(
+            command,
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+    except (FileNotFoundError, subprocess.CalledProcessError) as exc:
+        logger.warning(
+            "Audio duration probe failed. input=%s error=%s",
+            input_file,
+            exc,
+        )
+        return None
+
+    try:
+        return float(result.stdout.strip())
+    except ValueError:
+        logger.warning(
+            "Audio duration probe returned invalid output. input=%s output=%s",
+            input_file,
+            result.stdout,
+        )
+        return None
