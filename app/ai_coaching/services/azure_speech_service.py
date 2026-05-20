@@ -1,4 +1,6 @@
 import uuid
+import logging
+import time
 from pathlib import Path
 import azure.cognitiveservices.speech as speechsdk
 from fastapi import UploadFile
@@ -11,6 +13,8 @@ from app.ai_coaching.schemas.azure_speech_schema import (
     SttResponse,
     TtsResponse,
 )
+
+logger = logging.getLogger(__name__)
 
 AUDIO_DIR = Path("static/audio")
 AUDIO_DIR.mkdir(parents=True, exist_ok=True)
@@ -31,6 +35,8 @@ def _create_speech_config() -> speechsdk.SpeechConfig:
 
 
 async def save_upload_file(audio_file: UploadFile) -> Path:
+    started_at = time.perf_counter()
+
     if not audio_file.filename:
         raise ValueError("Audio filename is required.")
 
@@ -44,6 +50,14 @@ async def save_upload_file(audio_file: UploadFile) -> Path:
 
     with saved_path.open("wb") as buffer:
         buffer.write(file_content)
+
+    logger.info(
+        "Saved uploaded audio file. filename=%s saved_path=%s size=%s elapsed_ms=%s",
+        audio_file.filename,
+        saved_path,
+        len(file_content),
+        int((time.perf_counter() - started_at) * 1000),
+    )
 
     return saved_path
 
@@ -94,8 +108,17 @@ def assess_pronunciation_from_path(
     saved_path: Path,
     reference_text: str,
 ) -> PronunciationAssessmentResponse:
+    started_at = time.perf_counter()
+
     if not reference_text.strip():
         raise ValueError("Reference text is required.")
+
+    logger.info(
+        "Starting Azure pronunciation assessment. audio_path=%s audio_size=%s reference_text_length=%s",
+        saved_path,
+        saved_path.stat().st_size if saved_path.exists() else None,
+        len(reference_text),
+    )
 
     speech_config = _create_speech_config()
     audio_config = speechsdk.audio.AudioConfig(filename=str(saved_path))
@@ -118,6 +141,13 @@ def assess_pronunciation_from_path(
 
     # Azure 음성 인식 실패
     if result.reason != speechsdk.ResultReason.RecognizedSpeech:
+        logger.warning(
+            "Azure pronunciation assessment did not recognize speech. audio_path=%s elapsed_ms=%s reason=%s",
+            saved_path,
+            int((time.perf_counter() - started_at) * 1000),
+            result.reason,
+        )
+
         return PronunciationAssessmentResponse(
             recognizedText="",
             accuracyScore=None,
@@ -137,6 +167,8 @@ def assess_pronunciation_from_path(
     pronunciation_score = pronunciation_result.pronunciation_score
 
     # LLM 분석
+    feedback_started_at = time.perf_counter()
+
     feedback_result = analyze_pronunciation_feedback(
         reference_text=reference_text,
         recognized_text=recognized_text,
@@ -144,6 +176,15 @@ def assess_pronunciation_from_path(
         fluency_score=fluency_score,
         completeness_score=completeness_score,
         pronunciation_score=pronunciation_score,
+    )
+
+    logger.info(
+        "Azure pronunciation assessment completed. audio_path=%s total_elapsed_ms=%s feedback_elapsed_ms=%s recognized_text_length=%s pronunciation_score=%s",
+        saved_path,
+        int((time.perf_counter() - started_at) * 1000),
+        int((time.perf_counter() - feedback_started_at) * 1000),
+        len(recognized_text),
+        pronunciation_score,
     )
 
     return PronunciationAssessmentResponse(
@@ -180,14 +221,25 @@ async def recognize_and_assess_pronunciation(
     audio_file: UploadFile,
     reference_text: str,
 ) -> PronunciationAssessmentResponse:
+    started_at = time.perf_counter()
+
     saved_path = await save_upload_file(audio_file)
 
     wav_path = convert_audio_to_wav(saved_path)
 
-    return assess_pronunciation_from_path(
+    response = assess_pronunciation_from_path(
         saved_path=wav_path,
         reference_text=reference_text,
     )
+
+    logger.info(
+        "Pronunciation assessment request completed. original_filename=%s elapsed_ms=%s recognized_text_length=%s",
+        audio_file.filename,
+        int((time.perf_counter() - started_at) * 1000),
+        len(response.recognizedText or ""),
+    )
+
+    return response
 
 
 def synthesize_problem_word(word: str) -> ProblemWordAudioResponse:

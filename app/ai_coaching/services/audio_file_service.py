@@ -1,6 +1,9 @@
 from pathlib import Path
+import logging
 import subprocess
+import time
 
+logger = logging.getLogger(__name__)
 
 def convert_audio_to_wav(input_path: str | Path) -> Path:
     input_file = Path(input_path)
@@ -24,6 +27,31 @@ def convert_audio_to_wav(input_path: str | Path) -> Path:
         str(output_file),
     ]
 
-    subprocess.run(command, check=True)
+    started_at = time.perf_counter()
+    logger.info(
+        "Starting audio conversion. input=%s output=%s",
+        input_file,
+        output_file,
+    )
+
+    try:
+        subprocess.run(command, check=True, capture_output=True, text=True)
+    except subprocess.CalledProcessError as exc:
+        logger.exception(
+            "Audio conversion failed. input=%s output=%s elapsed_ms=%s stderr=%s",
+            input_file,
+            output_file,
+            int((time.perf_counter() - started_at) * 1000),
+            exc.stderr,
+        )
+        raise
+
+    logger.info(
+        "Audio conversion completed. input=%s output=%s elapsed_ms=%s output_size=%s",
+        input_file,
+        output_file,
+        int((time.perf_counter() - started_at) * 1000),
+        output_file.stat().st_size if output_file.exists() else None,
+    )
 
     return output_file
