@@ -6,7 +6,10 @@ import azure.cognitiveservices.speech as speechsdk
 from fastapi import UploadFile
 from app.core.config import settings
 from app.ai_coaching.services.openai_service import analyze_pronunciation_feedback
-from app.ai_coaching.services.audio_file_service import convert_audio_to_wav
+from app.ai_coaching.services.audio_file_service import (
+    convert_audio_to_wav,
+    get_audio_duration_seconds,
+)
 from app.ai_coaching.schemas.azure_speech_schema import (
     ProblemWordAudioResponse,
     PronunciationAssessmentResponse,
@@ -52,10 +55,12 @@ async def save_upload_file(audio_file: UploadFile) -> Path:
         buffer.write(file_content)
 
     logger.info(
-        "Saved uploaded audio file. filename=%s saved_path=%s size=%s elapsed_ms=%s",
+        "Saved uploaded audio file. filename=%s content_type=%s saved_path=%s size=%s duration_seconds=%s elapsed_ms=%s",
         audio_file.filename,
+        audio_file.content_type,
         saved_path,
         len(file_content),
+        get_audio_duration_seconds(saved_path),
         int((time.perf_counter() - started_at) * 1000),
     )
 
@@ -114,9 +119,10 @@ def assess_pronunciation_from_path(
         raise ValueError("Reference text is required.")
 
     logger.info(
-        "Starting Azure pronunciation assessment. audio_path=%s audio_size=%s reference_text_length=%s",
+        "Starting Azure pronunciation assessment. audio_path=%s audio_size=%s duration_seconds=%s reference_text_length=%s",
         saved_path,
         saved_path.stat().st_size if saved_path.exists() else None,
+        get_audio_duration_seconds(saved_path),
         len(reference_text),
     )
 
@@ -141,11 +147,23 @@ def assess_pronunciation_from_path(
 
     # Azure 음성 인식 실패
     if result.reason != speechsdk.ResultReason.RecognizedSpeech:
+        no_match_details = None
+        cancellation_details = None
+
+        if result.reason == speechsdk.ResultReason.NoMatch:
+            no_match_details = speechsdk.NoMatchDetails.from_result(result)
+
+        if result.reason == speechsdk.ResultReason.Canceled:
+            cancellation_details = speechsdk.CancellationDetails.from_result(result)
+
         logger.warning(
-            "Azure pronunciation assessment did not recognize speech. audio_path=%s elapsed_ms=%s reason=%s",
+            "Azure pronunciation assessment did not recognize speech. audio_path=%s elapsed_ms=%s reason=%s no_match_reason=%s cancellation_reason=%s cancellation_error=%s",
             saved_path,
             int((time.perf_counter() - started_at) * 1000),
             result.reason,
+            getattr(no_match_details, "reason", None),
+            getattr(cancellation_details, "reason", None),
+            getattr(cancellation_details, "error_details", None),
         )
 
         return PronunciationAssessmentResponse(
@@ -226,6 +244,16 @@ async def recognize_and_assess_pronunciation(
     saved_path = await save_upload_file(audio_file)
 
     wav_path = convert_audio_to_wav(saved_path)
+
+    logger.info(
+        "Converted pronunciation audio. original_path=%s original_size=%s original_duration_seconds=%s wav_path=%s wav_size=%s wav_duration_seconds=%s",
+        saved_path,
+        saved_path.stat().st_size if saved_path.exists() else None,
+        get_audio_duration_seconds(saved_path),
+        wav_path,
+        wav_path.stat().st_size if wav_path.exists() else None,
+        get_audio_duration_seconds(wav_path),
+    )
 
     response = assess_pronunciation_from_path(
         saved_path=wav_path,
