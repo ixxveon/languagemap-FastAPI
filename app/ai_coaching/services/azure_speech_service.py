@@ -28,6 +28,75 @@ UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 # fallback 메시지 상수화
 DEFAULT_NO_SPEECH_FEEDBACK = "음성이 명확하게 인식되지 않았습니다."
 
+
+def _default_pronunciation_response(
+    recognized_text: str = "",
+    accuracy_score: float | None = 0,
+    fluency_score: float | None = 0,
+    completeness_score: float | None = 0,
+    pronunciation_score: float | None = 0,
+    feedback: str = DEFAULT_NO_SPEECH_FEEDBACK,
+    problem_words: list | None = None,
+) -> PronunciationAssessmentResponse:
+    return PronunciationAssessmentResponse(
+        recognizedText=recognized_text,
+        accuracyScore=accuracy_score,
+        fluencyScore=fluency_score,
+        completenessScore=completeness_score,
+        pronunciationScore=pronunciation_score,
+        feedback=feedback,
+        problemWords=problem_words or [],
+        nextAssistantText=None,
+        nextAssistantAudioUrl=None,
+    )
+
+
+def _safe_analyze_pronunciation_feedback(
+    reference_text: str,
+    recognized_text: str,
+    accuracy_score: float | None,
+    fluency_score: float | None,
+    completeness_score: float | None,
+    pronunciation_score: float | None,
+) -> dict:
+    logger.info(
+        "OpenAI pronunciation feedback start. reference_text_length=%s recognized_text=%s pronunciation_score=%s",
+        len(reference_text),
+        recognized_text,
+        pronunciation_score,
+    )
+
+    started_at = time.perf_counter()
+
+    try:
+        result = analyze_pronunciation_feedback(
+            reference_text=reference_text,
+            recognized_text=recognized_text,
+            accuracy_score=accuracy_score,
+            fluency_score=fluency_score,
+            completeness_score=completeness_score,
+            pronunciation_score=pronunciation_score,
+        )
+    except Exception:
+        logger.exception(
+            "OpenAI pronunciation feedback failed. elapsed_ms=%s recognized_text=%s",
+            int((time.perf_counter() - started_at) * 1000),
+            recognized_text,
+        )
+        return {
+            "feedback": DEFAULT_NO_SPEECH_FEEDBACK,
+            "problemWords": [],
+        }
+
+    logger.info(
+        "OpenAI pronunciation feedback completed. elapsed_ms=%s feedback_length=%s problem_word_count=%s",
+        int((time.perf_counter() - started_at) * 1000),
+        len(result.get("feedback", "") or ""),
+        len(result.get("problemWords", []) or []),
+    )
+
+    return result
+
 def _create_speech_config() -> speechsdk.SpeechConfig:
     speech_config = speechsdk.SpeechConfig(
         subscription=settings.azure_speech_key,
@@ -148,6 +217,7 @@ def assess_pronunciation_from_path(
     reference_text: str,
 ) -> PronunciationAssessmentResponse:
     started_at = time.perf_counter()
+    fallback_executed = False
 
     if not reference_text.strip():
         raise ValueError("Reference text is required.")
@@ -179,6 +249,13 @@ def assess_pronunciation_from_path(
     pronunciation_config.apply_to(recognizer)
     result = recognizer.recognize_once_async().get()
 
+    logger.info(
+        "Azure pronunciation assessment raw result. audio_path=%s reason=%s recognized_text=%s",
+        saved_path,
+        result.reason,
+        result.text,
+    )
+
     # Azure 음성 인식 실패
     if result.reason != speechsdk.ResultReason.RecognizedSpeech:
         no_match_details = None
@@ -202,6 +279,7 @@ def assess_pronunciation_from_path(
 
         stt_fallback = recognize_speech_from_path(saved_path)
         fallback_text = stt_fallback.recognizedText or ""
+        fallback_executed = True
 
         if fallback_text.strip():
             logger.warning(
@@ -210,7 +288,7 @@ def assess_pronunciation_from_path(
                 len(fallback_text),
             )
 
-            feedback_result = analyze_pronunciation_feedback(
+            feedback_result = _safe_analyze_pronunciation_feedback(
                 reference_text=reference_text,
                 recognized_text=fallback_text,
                 accuracy_score=0,
@@ -219,25 +297,47 @@ def assess_pronunciation_from_path(
                 pronunciation_score=0,
             )
 
-            return PronunciationAssessmentResponse(
-                recognizedText=fallback_text,
-                accuracyScore=0,
-                fluencyScore=0,
-                completenessScore=0,
-                pronunciationScore=0,
-                feedback=feedback_result.get("feedback"),
-                problemWords=feedback_result.get("problemWords", []),
+            response = _default_pronunciation_response(
+                recognized_text=fallback_text,
+                accuracy_score=0,
+                fluency_score=0,
+                completeness_score=0,
+                pronunciation_score=0,
+                feedback=feedback_result.get("feedback") or DEFAULT_NO_SPEECH_FEEDBACK,
+                problem_words=feedback_result.get("problemWords", []),
             )
 
-        return PronunciationAssessmentResponse(
-            recognizedText="",
-            accuracyScore=0,
-            fluencyScore=0,
-            completenessScore=0,
-            pronunciationScore=0,
+            logger.info(
+                "Pronunciation assessment response ready. audio_path=%s fallback_executed=%s recognized_text=%s pronunciation_score=%s final_response=%s",
+                saved_path,
+                fallback_executed,
+                response.recognizedText,
+                response.pronunciationScore,
+                response.model_dump(),
+            )
+
+            return response
+
+        response = _default_pronunciation_response(
+            recognized_text="",
+            accuracy_score=0,
+            fluency_score=0,
+            completeness_score=0,
+            pronunciation_score=0,
             feedback=DEFAULT_NO_SPEECH_FEEDBACK,
-            problemWords=[],
+            problem_words=[],
         )
+
+        logger.info(
+            "Pronunciation assessment response ready. audio_path=%s fallback_executed=%s recognized_text=%s pronunciation_score=%s final_response=%s",
+            saved_path,
+            fallback_executed,
+            response.recognizedText,
+            response.pronunciationScore,
+            response.model_dump(),
+        )
+
+        return response
 
     pronunciation_result = speechsdk.PronunciationAssessmentResult(result)
 
@@ -252,9 +352,10 @@ def assess_pronunciation_from_path(
 
         stt_fallback = recognize_speech_from_path(saved_path)
         fallback_text = stt_fallback.recognizedText or ""
+        fallback_executed = True
 
         if fallback_text.strip():
-            feedback_result = analyze_pronunciation_feedback(
+            feedback_result = _safe_analyze_pronunciation_feedback(
                 reference_text=reference_text,
                 recognized_text=fallback_text,
                 accuracy_score=0,
@@ -263,25 +364,47 @@ def assess_pronunciation_from_path(
                 pronunciation_score=0,
             )
 
-            return PronunciationAssessmentResponse(
-                recognizedText=fallback_text,
-                accuracyScore=0,
-                fluencyScore=0,
-                completenessScore=0,
-                pronunciationScore=0,
-                feedback=feedback_result.get("feedback"),
-                problemWords=feedback_result.get("problemWords", []),
+            response = _default_pronunciation_response(
+                recognized_text=fallback_text,
+                accuracy_score=0,
+                fluency_score=0,
+                completeness_score=0,
+                pronunciation_score=0,
+                feedback=feedback_result.get("feedback") or DEFAULT_NO_SPEECH_FEEDBACK,
+                problem_words=feedback_result.get("problemWords", []),
             )
 
-        return PronunciationAssessmentResponse(
-            recognizedText="",
-            accuracyScore=0,
-            fluencyScore=0,
-            completenessScore=0,
-            pronunciationScore=0,
+            logger.info(
+                "Pronunciation assessment response ready. audio_path=%s fallback_executed=%s recognized_text=%s pronunciation_score=%s final_response=%s",
+                saved_path,
+                fallback_executed,
+                response.recognizedText,
+                response.pronunciationScore,
+                response.model_dump(),
+            )
+
+            return response
+
+        response = _default_pronunciation_response(
+            recognized_text="",
+            accuracy_score=0,
+            fluency_score=0,
+            completeness_score=0,
+            pronunciation_score=0,
             feedback=DEFAULT_NO_SPEECH_FEEDBACK,
-            problemWords=[],
+            problem_words=[],
         )
+
+        logger.info(
+            "Pronunciation assessment response ready. audio_path=%s fallback_executed=%s recognized_text=%s pronunciation_score=%s final_response=%s",
+            saved_path,
+            fallback_executed,
+            response.recognizedText,
+            response.pronunciationScore,
+            response.model_dump(),
+        )
+
+        return response
 
     accuracy_score = pronunciation_result.accuracy_score
     fluency_score = pronunciation_result.fluency_score
@@ -291,7 +414,7 @@ def assess_pronunciation_from_path(
     # LLM 분석
     feedback_started_at = time.perf_counter()
 
-    feedback_result = analyze_pronunciation_feedback(
+    feedback_result = _safe_analyze_pronunciation_feedback(
         reference_text=reference_text,
         recognized_text=recognized_text,
         accuracy_score=accuracy_score,
@@ -309,15 +432,26 @@ def assess_pronunciation_from_path(
         pronunciation_score,
     )
 
-    return PronunciationAssessmentResponse(
-        recognizedText=recognized_text,
-        accuracyScore=accuracy_score,
-        fluencyScore=fluency_score,
-        completenessScore=completeness_score,
-        pronunciationScore=pronunciation_score,
-        feedback=feedback_result.get("feedback"),
-        problemWords=feedback_result.get("problemWords", []),
+    response = _default_pronunciation_response(
+        recognized_text=recognized_text,
+        accuracy_score=accuracy_score,
+        fluency_score=fluency_score,
+        completeness_score=completeness_score,
+        pronunciation_score=pronunciation_score,
+        feedback=feedback_result.get("feedback") or DEFAULT_NO_SPEECH_FEEDBACK,
+        problem_words=feedback_result.get("problemWords", []),
     )
+
+    logger.info(
+        "Pronunciation assessment response ready. audio_path=%s fallback_executed=%s recognized_text=%s pronunciation_score=%s final_response=%s",
+        saved_path,
+        fallback_executed,
+        response.recognizedText,
+        response.pronunciationScore,
+        response.model_dump(),
+    )
+
+    return response
 
 
 async def recognize_speech_from_file(audio_file: UploadFile) -> SttResponse:
@@ -345,34 +479,66 @@ async def recognize_and_assess_pronunciation(
     reference_text: str,
 ) -> PronunciationAssessmentResponse:
     started_at = time.perf_counter()
-
-    saved_path = await save_upload_file(audio_file)
-
-    wav_path = convert_audio_to_wav(saved_path)
+    saved_path: Path | None = None
+    wav_path: Path | None = None
 
     logger.info(
-        "Converted pronunciation audio. original_path=%s original_size=%s original_duration_seconds=%s wav_path=%s wav_size=%s wav_duration_seconds=%s",
-        saved_path,
-        saved_path.stat().st_size if saved_path.exists() else None,
-        get_audio_duration_seconds(saved_path),
-        wav_path,
-        wav_path.stat().st_size if wav_path.exists() else None,
-        get_audio_duration_seconds(wav_path),
-    )
-
-    response = assess_pronunciation_from_path(
-        saved_path=wav_path,
-        reference_text=reference_text,
-    )
-
-    logger.info(
-        "Pronunciation assessment request completed. original_filename=%s elapsed_ms=%s recognized_text_length=%s",
+        "Pronunciation assessment request received. filename=%s content_type=%s reference_text_length=%s",
         audio_file.filename,
-        int((time.perf_counter() - started_at) * 1000),
-        len(response.recognizedText or ""),
+        audio_file.content_type,
+        len(reference_text or ""),
     )
 
-    return response
+    try:
+        saved_path = await save_upload_file(audio_file)
+        logger.info("Pronunciation assessment saved path. saved_path=%s", saved_path)
+
+        wav_path = convert_audio_to_wav(saved_path)
+        logger.info(
+            "Pronunciation assessment wav path ready. wav_path=%s wav_duration_seconds=%s",
+            wav_path,
+            get_audio_duration_seconds(wav_path),
+        )
+
+        logger.info(
+            "Converted pronunciation audio. original_path=%s original_size=%s original_duration_seconds=%s wav_path=%s wav_size=%s wav_duration_seconds=%s",
+            saved_path,
+            saved_path.stat().st_size if saved_path.exists() else None,
+            get_audio_duration_seconds(saved_path),
+            wav_path,
+            wav_path.stat().st_size if wav_path.exists() else None,
+            get_audio_duration_seconds(wav_path),
+        )
+
+        response = assess_pronunciation_from_path(
+            saved_path=wav_path,
+            reference_text=reference_text,
+        )
+
+        logger.info(
+            "Pronunciation assessment request completed. original_filename=%s elapsed_ms=%s recognized_text_length=%s",
+            audio_file.filename,
+            int((time.perf_counter() - started_at) * 1000),
+            len(response.recognizedText or ""),
+        )
+
+        logger.info(
+            "Pronunciation assessment final response serialize. original_filename=%s response=%s",
+            audio_file.filename,
+            response.model_dump(),
+        )
+
+        return response
+    except Exception:
+        logger.exception(
+            "Pronunciation assessment pipeline failed. filename=%s saved_path=%s wav_path=%s wav_duration_seconds=%s elapsed_ms=%s",
+            audio_file.filename,
+            saved_path,
+            wav_path,
+            get_audio_duration_seconds(wav_path) if wav_path else None,
+            int((time.perf_counter() - started_at) * 1000),
+        )
+        raise
 
 
 def synthesize_problem_word(word: str) -> ProblemWordAudioResponse:
