@@ -1,5 +1,7 @@
 import json
-from openai import OpenAI
+import logging
+import time
+from openai import APIConnectionError, APIError, APITimeoutError, OpenAI
 from app.core.config import settings
 from app.ai_coaching.prompts.coaching_script_prompt_builder import build_coaching_script_prompt
 from app.ai_coaching.prompts.final_feedback_prompt_builder import build_final_feedback_prompt
@@ -22,6 +24,8 @@ from app.ai_coaching.schemas.openai_schema import (
     YoutubeKeywordsRequest,
     YoutubeKeywordsResponse,
 )
+
+logger = logging.getLogger(__name__)
 
 # =========================
 # OpenAI Client
@@ -136,7 +140,56 @@ def analyze_pronunciation_feedback(
         pronunciation_score=pronunciation_score,
     )
 
-    data = _request_json(prompt)
+    logger.info(
+        "Pronunciation feedback OpenAI request starting. reference_text_length=%s recognized_text_length=%s pronunciation_score=%s prompt=%s",
+        len(reference_text),
+        len(recognized_text),
+        pronunciation_score,
+        prompt,
+    )
+
+    started_at = time.perf_counter()
+
+    try:
+        response = client.responses.create(
+            model=settings.openai_chat_model,
+            input=prompt,
+        )
+    except APITimeoutError:
+        logger.exception("Pronunciation feedback OpenAI timeout.")
+        raise
+    except APIConnectionError:
+        logger.exception("Pronunciation feedback OpenAI connection error.")
+        raise
+    except APIError:
+        logger.exception("Pronunciation feedback OpenAI API error.")
+        raise
+    except Exception:
+        logger.exception("Pronunciation feedback OpenAI unexpected error.")
+        raise
+
+    raw_text = _extract_text(response)
+
+    logger.info(
+        "Pronunciation feedback OpenAI response received. elapsed_ms=%s raw_response=%s",
+        int((time.perf_counter() - started_at) * 1000),
+        raw_text,
+    )
+
+    try:
+        data = _safe_json_loads(raw_text)
+    except json.JSONDecodeError:
+        logger.exception(
+            "Pronunciation feedback OpenAI JSON decode failed. raw_response=%s",
+            raw_text,
+        )
+        raise
+    except Exception:
+        logger.exception(
+            "Pronunciation feedback OpenAI parse error. raw_response=%s",
+            raw_text,
+        )
+        raise
 
     raw_problem_words = data.get("problemWords", [])
 

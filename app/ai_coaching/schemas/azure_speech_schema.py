@@ -34,6 +34,8 @@ class PronunciationAssessmentResponse(BaseModel):
     pronunciationScore: float | None = None
     feedback: str | None = None
     problemWords: list[PronunciationProblemWord] = []
+    nextAssistantText: str | None = None
+    nextAssistantAudioUrl: str | None = None
 # =========================
 # Problem Word Audio
 # =========================

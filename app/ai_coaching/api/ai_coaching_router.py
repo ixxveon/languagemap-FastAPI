@@ -1,4 +1,6 @@
+import logging
 from fastapi import APIRouter, File, Form, UploadFile
+from fastapi.responses import JSONResponse
 from app.ai_coaching.schemas.azure_speech_schema import (
     ProblemWordAudioRequest,
     ProblemWordAudioResponse,
@@ -29,6 +31,8 @@ from app.ai_coaching.services.openai_service import (
     generate_youtube_keywords,
     summarize_video_with_llm,)
 from app.ai_coaching.services.youtube_service import search_youtube_videos
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(
     prefix="/api/ai-coaching",
@@ -73,9 +77,47 @@ async def create_stt(audio_file: UploadFile = File(...),) -> SttResponse:
     response_model=PronunciationAssessmentResponse,)
 async def create_pronunciation_assessment(reference_text: str = Form(...),audio_file: UploadFile = File(...),
 ) -> PronunciationAssessmentResponse:
-    return await recognize_and_assess_pronunciation(
-        audio_file=audio_file,
-        reference_text=reference_text,)
+    logger.info(
+        "Pronunciation assessment endpoint request received. filename=%s content_type=%s reference_text_length=%s",
+        audio_file.filename,
+        audio_file.content_type,
+        len(reference_text or ""),
+    )
+
+    try:
+        response = await recognize_and_assess_pronunciation(
+            audio_file=audio_file,
+            reference_text=reference_text,
+        )
+    except Exception:
+        logger.exception(
+            "Pronunciation assessment endpoint failed. filename=%s content_type=%s",
+            audio_file.filename,
+            audio_file.content_type,
+        )
+        return JSONResponse(
+            status_code=500,
+            content={
+                "recognizedText": "",
+                "accuracyScore": 0,
+                "fluencyScore": 0,
+                "completenessScore": 0,
+                "pronunciationScore": 0,
+                "feedback": "음성이 명확하게 인식되지 않았습니다.",
+                "problemWords": [],
+                "nextAssistantText": None,
+                "nextAssistantAudioUrl": None,
+                "detail": "pronunciation-assessment failed",
+            },
+        )
+
+    logger.info(
+        "Pronunciation assessment endpoint response serialize. filename=%s response=%s",
+        audio_file.filename,
+        response.model_dump(),
+    )
+
+    return response
 
 # =========================
 # YouTube
