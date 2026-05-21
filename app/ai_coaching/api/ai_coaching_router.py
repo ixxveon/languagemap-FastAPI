@@ -96,7 +96,7 @@ async def create_pronunciation_assessment(reference_text: str = Form(...),audio_
             audio_file.content_type,
         )
         return JSONResponse(
-            status_code=500,
+            status_code=200,
             content={
                 "recognizedText": "",
                 "accuracyScore": 0,

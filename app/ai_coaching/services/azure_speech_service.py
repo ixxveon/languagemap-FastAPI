@@ -1,5 +1,6 @@
 import uuid
 import logging
+import re
 import time
 from pathlib import Path
 import azure.cognitiveservices.speech as speechsdk
@@ -27,6 +28,8 @@ UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 
 # fallback 메시지 상수화
 DEFAULT_NO_SPEECH_FEEDBACK = "음성이 명확하게 인식되지 않았습니다."
+INVALID_AUDIO_FEEDBACK = "음성 파일을 인식할 수 없거나 형식이 올바르지 않습니다."
+MIN_RECOGNIZED_TEXT_LENGTH = 2
 
 
 def _default_pronunciation_response(
@@ -96,6 +99,48 @@ def _safe_analyze_pronunciation_feedback(
     )
 
     return result
+
+
+def _normalized_text_length(text: str | None) -> int:
+    if not text:
+        return 0
+
+    collapsed = re.sub(r"[\W_]+", "", text)
+    return len(collapsed)
+
+
+def _is_too_short_recognized_text(text: str | None) -> bool:
+    return _normalized_text_length(text) < MIN_RECOGNIZED_TEXT_LENGTH
+
+
+def _run_plain_stt_fallback(saved_path: Path, reason: str) -> str:
+    logger.info(
+        "Running plain STT fallback. audio_path=%s reason=%s",
+        saved_path,
+        reason,
+    )
+
+    try:
+        stt_fallback = recognize_speech_from_path(saved_path)
+    except Exception:
+        logger.exception(
+            "Plain STT fallback failed. audio_path=%s reason=%s",
+            saved_path,
+            reason,
+        )
+        return ""
+
+    fallback_text = stt_fallback.recognizedText or ""
+
+    logger.info(
+        "Plain STT fallback completed. audio_path=%s reason=%s fallback_text=%s fallback_text_length=%s",
+        saved_path,
+        reason,
+        fallback_text,
+        len(fallback_text),
+    )
+
+    return fallback_text
 
 def _create_speech_config() -> speechsdk.SpeechConfig:
     speech_config = speechsdk.SpeechConfig(
@@ -223,11 +268,15 @@ def assess_pronunciation_from_path(
         raise ValueError("Reference text is required.")
 
     logger.info(
-        "Starting Azure pronunciation assessment. audio_path=%s audio_size=%s duration_seconds=%s reference_text_length=%s",
+        "Starting Azure pronunciation assessment. audio_path=%s audio_size=%s duration_seconds=%s reference_text_length=%s recognition_language=%s grading_system=%s granularity=%s enable_miscue=%s",
         saved_path,
         saved_path.stat().st_size if saved_path.exists() else None,
         get_audio_duration_seconds(saved_path),
         len(reference_text),
+        "en-US",
+        "HundredMark",
+        "Phoneme",
+        True,
     )
 
     speech_config = _create_speech_config()
@@ -247,7 +296,50 @@ def assess_pronunciation_from_path(
     )
 
     pronunciation_config.apply_to(recognizer)
-    result = recognizer.recognize_once_async().get()
+    try:
+        result = recognizer.recognize_once_async().get()
+    except Exception:
+        logger.exception(
+            "Azure pronunciation assessment execution failed. audio_path=%s reference_text_length=%s",
+            saved_path,
+            len(reference_text),
+        )
+
+        fallback_executed = True
+        fallback_text = _run_plain_stt_fallback(
+            saved_path,
+            reason="pronunciation_exception",
+        )
+
+        if fallback_text.strip():
+            feedback_result = _safe_analyze_pronunciation_feedback(
+                reference_text=reference_text,
+                recognized_text=fallback_text,
+                accuracy_score=0,
+                fluency_score=0,
+                completeness_score=0,
+                pronunciation_score=0,
+            )
+
+            return _default_pronunciation_response(
+                recognized_text=fallback_text,
+                accuracy_score=0,
+                fluency_score=0,
+                completeness_score=0,
+                pronunciation_score=0,
+                feedback=feedback_result.get("feedback") or DEFAULT_NO_SPEECH_FEEDBACK,
+                problem_words=feedback_result.get("problemWords", []),
+            )
+
+        return _default_pronunciation_response(
+            recognized_text="",
+            accuracy_score=0,
+            fluency_score=0,
+            completeness_score=0,
+            pronunciation_score=0,
+            feedback=DEFAULT_NO_SPEECH_FEEDBACK,
+            problem_words=[],
+        )
 
     logger.info(
         "Azure pronunciation assessment raw result. audio_path=%s reason=%s recognized_text=%s",
@@ -277,9 +369,11 @@ def assess_pronunciation_from_path(
             getattr(cancellation_details, "error_details", None),
         )
 
-        stt_fallback = recognize_speech_from_path(saved_path)
-        fallback_text = stt_fallback.recognizedText or ""
         fallback_executed = True
+        fallback_text = _run_plain_stt_fallback(
+            saved_path,
+            reason=f"pronunciation_result_{result.reason}",
+        )
 
         if fallback_text.strip():
             logger.warning(
@@ -342,34 +436,49 @@ def assess_pronunciation_from_path(
     pronunciation_result = speechsdk.PronunciationAssessmentResult(result)
 
     recognized_text = result.text
+    logger.info(
+        "Azure pronunciation assessment recognized text diagnostics. audio_path=%s recognized_text=%s normalized_length=%s",
+        saved_path,
+        recognized_text,
+        _normalized_text_length(recognized_text),
+    )
 
-    if not recognized_text.strip():
+    if not recognized_text.strip() or _is_too_short_recognized_text(recognized_text):
         logger.warning(
-            "Azure pronunciation assessment returned blank recognized text. audio_path=%s elapsed_ms=%s",
+            "Azure pronunciation assessment returned blank or too-short recognized text. audio_path=%s elapsed_ms=%s recognized_text=%s normalized_length=%s",
             saved_path,
             int((time.perf_counter() - started_at) * 1000),
+            recognized_text,
+            _normalized_text_length(recognized_text),
         )
 
-        stt_fallback = recognize_speech_from_path(saved_path)
-        fallback_text = stt_fallback.recognizedText or ""
         fallback_executed = True
+        fallback_text = _run_plain_stt_fallback(
+            saved_path,
+            reason="recognized_text_blank_or_short",
+        )
+
+        accuracy_score = pronunciation_result.accuracy_score
+        fluency_score = pronunciation_result.fluency_score
+        completeness_score = pronunciation_result.completeness_score
+        pronunciation_score = pronunciation_result.pronunciation_score
 
         if fallback_text.strip():
             feedback_result = _safe_analyze_pronunciation_feedback(
                 reference_text=reference_text,
                 recognized_text=fallback_text,
-                accuracy_score=0,
-                fluency_score=0,
-                completeness_score=0,
-                pronunciation_score=0,
+                accuracy_score=accuracy_score,
+                fluency_score=fluency_score,
+                completeness_score=completeness_score,
+                pronunciation_score=pronunciation_score,
             )
 
             response = _default_pronunciation_response(
                 recognized_text=fallback_text,
-                accuracy_score=0,
-                fluency_score=0,
-                completeness_score=0,
-                pronunciation_score=0,
+                accuracy_score=accuracy_score,
+                fluency_score=fluency_score,
+                completeness_score=completeness_score,
+                pronunciation_score=pronunciation_score,
                 feedback=feedback_result.get("feedback") or DEFAULT_NO_SPEECH_FEEDBACK,
                 problem_words=feedback_result.get("problemWords", []),
             )
@@ -493,7 +602,24 @@ async def recognize_and_assess_pronunciation(
         saved_path = await save_upload_file(audio_file)
         logger.info("Pronunciation assessment saved path. saved_path=%s", saved_path)
 
-        wav_path = convert_audio_to_wav(saved_path)
+        try:
+            wav_path = convert_audio_to_wav(saved_path)
+        except Exception:
+            logger.exception(
+                "Pronunciation assessment audio conversion failed. filename=%s saved_path=%s",
+                audio_file.filename,
+                saved_path,
+            )
+            return _default_pronunciation_response(
+                recognized_text="",
+                accuracy_score=0,
+                fluency_score=0,
+                completeness_score=0,
+                pronunciation_score=0,
+                feedback=INVALID_AUDIO_FEEDBACK,
+                problem_words=[],
+            )
+
         logger.info(
             "Pronunciation assessment wav path ready. wav_path=%s wav_duration_seconds=%s",
             wav_path,
