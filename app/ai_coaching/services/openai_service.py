@@ -264,6 +264,40 @@ def generate_final_feedback(request: FinalFeedbackRequest) -> FinalFeedbackRespo
     )
 
     data = _request_json(prompt)
+    pronunciation = data.get("pronunciation")
+
+    if isinstance(pronunciation, dict):
+        raw_problem_words = pronunciation.get("problemWords")
+
+        if raw_problem_words is None:
+            pronunciation["problemWords"] = []
+        else:
+            normalized_problem_words = []
+
+            for item in raw_problem_words:
+                if isinstance(item, str):
+                    word = item.strip()
+
+                    if word:
+                        normalized_problem_words.append({
+                            "word": word,
+                            "audioUrl": None,
+                        })
+                elif isinstance(item, dict):
+                    word = item.get("word")
+
+                    if isinstance(word, str):
+                        word = word.strip()
+
+                    if not word:
+                        continue
+
+                    normalized_problem_words.append({
+                        "word": word,
+                        "audioUrl": item.get("audioUrl"),
+                    })
+
+            pronunciation["problemWords"] = normalized_problem_words
 
     return FinalFeedbackResponse(**data)
 
